@@ -51,6 +51,7 @@ int main(int argc, char** argv)
     printf("atomic counter first 16 bit: %d\n", atomic_counter.load() & (0xffff));
     printf("atomic counter next 15 bit: %d\n", atomic_counter.load()>>16 & (0x7fff));
     printf("atomic counter last 2 bit: %d\n", atomic_counter.load()>>30);
-    
+
+    printf(" bit: %d\n", 1>>16);
     return 0;
 }
