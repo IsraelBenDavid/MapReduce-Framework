@@ -62,7 +62,7 @@ public:
 		KChar* k3 = new KChar(c);
 		VCount* v3 = new VCount(count);
 		usleep(150000);
-//		emit3(k3, v3, context);
+		emit3(k3, v3, context);
 	}
 };
 
@@ -99,14 +99,14 @@ int main(int argc, char** argv)
 //
 //	closeJobHandle(job);
 //
-//	for (OutputPair& pair: outputVec) {
-//		char c = ((const KChar*)pair.first)->c;
-//		int count = ((const VCount*)pair.second)->count;
-//		printf("The character %c appeared %d time%s\n",
-//			c, count, count > 1 ? "s" : "");
-//		delete pair.first;
-//		delete pair.second;
-//	}
+	for (OutputPair& pair: outputVec) {
+		char c = ((const KChar*)pair.first)->c;
+		int count = ((const VCount*)pair.second)->count;
+		printf("The character %c appeared %d time%s\n",
+			c, count, count > 1 ? "s" : "");
+		delete pair.first;
+		delete pair.second;
+	}
 	
 	return 0;
 }
