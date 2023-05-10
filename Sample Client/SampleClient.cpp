@@ -81,24 +81,24 @@ int main(int argc, char** argv)
 	JobState state;
     JobState last_state={UNDEFINED_STAGE,0};
 	JobHandle job = startMapReduceJob(client, inputVec, outputVec, 4);
-//	getJobState(job, &state);
-//
-//	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
-//	{
-//        if (last_state.stage != state.stage || last_state.percentage != state.percentage){
-//            printf("stage %d, %f%% \n",
-//			state.stage, state.percentage);
-//        }
-//		usleep(100000);
-//        last_state = state;
-//		getJobState(job, &state);
-//	}
-//	printf("stage %d, %f%% \n",
-//			state.stage, state.percentage);
-//	printf("Done!\n");
-//
-//	closeJobHandle(job);
-//
+	getJobState(job, &state);
+
+	while (state.stage != REDUCE_STAGE || state.percentage != 100.0)
+	{
+        if (last_state.stage != state.stage || last_state.percentage != state.percentage){
+            printf("stage %d, %f%% \n",
+			state.stage, state.percentage);
+        }
+		usleep(100000);
+        last_state = state;
+		getJobState(job, &state);
+	}
+	printf("stage %d, %f%% \n",
+			state.stage, state.percentage);
+	printf("Done!\n");
+
+	closeJobHandle(job);
+
 	for (OutputPair& pair: outputVec) {
 		char c = ((const KChar*)pair.first)->c;
 		int count = ((const VCount*)pair.second)->count;
