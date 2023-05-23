@@ -3,15 +3,14 @@
 #include <algorithm>
 #include <iostream>
 #include <atomic>
-#include "Barrier.h"
 #include <pthread.h>
 #include <cstdio>
+#include "Barrier.h"
 #include "MapReduceFramework.h"
-#include <semaphore.h>
 
 /***** Messages *****/
 
-#define MSG_ERROR "system error."
+#define MSG_ERROR "system error: "
 #define MSG_ALLOC_FAIL "Allocation failure."
 #define MSG_MUTEX_INIT_FAIL "Pthread mutex init failure."
 #define MSG_MUTEX_LOCK_FAIL "Pthread mutex lock failure."
