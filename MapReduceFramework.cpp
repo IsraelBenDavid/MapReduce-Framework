@@ -1,3 +1,5 @@
+/***** Includes *****/
+
 #include <algorithm>
 #include <iostream>
 #include <atomic>
@@ -9,8 +11,18 @@
 
 /***** Messages *****/
 
+#define MSG_ERROR "system error."
+#define MSG_ALLOC_FAIL "Allocation failure."
+#define MSG_MUTEX_INIT_FAIL "Pthread mutex init failure."
+#define MSG_MUTEX_LOCK_FAIL "Pthread mutex lock failure."
+#define MSG_MUTEX_UNLOCK_FAIL "Pthread mutex lock failure."
+#define MSG_MUTEX_DESTROY_FAIL "Pthread mutex destroy failure."
+#define MSG_PTHREAD_CREATION_FAIL "Pthread creation failure."
+#define MSG_PTHREAD_JOIN_FAIL "Pthread join failure."
+
 /***** Constants *****/
 
+#define FAIL 1
 #define PERCENT_COEF 100
 #define STAGE_LOC << 62
 #define TOTAL_LOC << 31
@@ -22,18 +34,18 @@
 
 
 typedef struct Job {
-    pthread_t *workers;
-    Barrier *barrier;
-    sem_t emit3_mutex, sort_mutex;
+    pthread_t *workers{};
+    Barrier *barrier{};
+    pthread_mutex_t emit3_mutex{}, sort_mutex{};
     std::vector<IntermediateVec> intermediate_vecs;
     std::vector<IntermediateVec> shuffled_intermediate_vecs;
-    JobState job_state;
-    std::atomic<uint64_t> new_atomic_counter;
-    int multiThreadLevel;
-    const MapReduceClient *client;
-    const InputVec *inputVec;
-    OutputVec *outputVec;
-    bool called_join;
+    JobState job_state{};
+    std::atomic<uint64_t> new_atomic_counter{};
+    int multiThreadLevel{};
+    const MapReduceClient *client{};
+    const InputVec *inputVec{};
+    OutputVec *outputVec{};
+    bool called_join{};
 } Job;
 
 typedef struct ThreadContext {
@@ -140,10 +152,17 @@ void sort_phase (ThreadContext *thread_context)
              { return *a.first < *b.first; });
 
   // pushing to a shared vector
-  sem_wait (&(thread_context->job->sort_mutex));
+  if(pthread_mutex_lock (&thread_context->job->sort_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_LOCK_FAIL << std::endl;
+      exit (FAIL);
+    }
   thread_context->job->intermediate_vecs.push_back (*curr_vec);
-  sem_post (&(thread_context->job->sort_mutex));
-
+  if(pthread_mutex_unlock (&thread_context->job->sort_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_UNLOCK_FAIL << std::endl;
+      exit (FAIL);
+    }
 }
 
 /*
@@ -268,12 +287,33 @@ JobContext *job_init (const MapReduceClient *client,
                       int multiThreadLevel)
 {
   // allocate the job context
-  auto *job_context = new JobContext;
+  auto *job_context = new (std::nothrow) JobContext;
+  if (job_context == nullptr)
+    {
+      std::cout << MSG_ERROR << MSG_ALLOC_FAIL << std::endl;
+      exit (FAIL);
+    }
 
   /* set job data */
-  job_context->job = new Job;
-  job_context->job->workers = new pthread_t[multiThreadLevel];
-  job_context->job->barrier = new Barrier (multiThreadLevel);
+  job_context->job = new (std::nothrow) Job;
+  if (job_context->job == nullptr)
+    {
+      std::cout << MSG_ERROR << MSG_ALLOC_FAIL << std::endl;
+      exit (FAIL);
+    }
+
+  job_context->job->workers = new (std::nothrow) pthread_t[multiThreadLevel];
+  if (job_context->job->workers == nullptr)
+    {
+      std::cout << MSG_ERROR << MSG_ALLOC_FAIL << std::endl;
+      exit (FAIL);
+    }
+  job_context->job->barrier = new (std::nothrow) Barrier (multiThreadLevel);
+  if (job_context->job->barrier == nullptr)
+    {
+      std::cout << MSG_ERROR << MSG_ALLOC_FAIL << std::endl;
+      exit (FAIL);
+    }
 
   job_context->job->job_state = {UNDEFINED_STAGE, 0};
   job_context->job->called_join = false;
@@ -284,11 +324,23 @@ JobContext *job_init (const MapReduceClient *client,
   job_context->job->inputVec = inputVec;
   job_context->job->outputVec = outputVec;
 
-  sem_init (&job_context->job->emit3_mutex, 0, 1);
-  sem_init (&job_context->job->sort_mutex, 0, 1);
+  // set the mutexes
+  if (pthread_mutex_init(&job_context->job->emit3_mutex, nullptr)){
+      std::cout << MSG_ERROR << MSG_MUTEX_INIT_FAIL << std::endl;
+      exit (FAIL);
+  }
+  if (pthread_mutex_init(&job_context->job->sort_mutex, nullptr)){
+      std::cout << MSG_ERROR << MSG_MUTEX_INIT_FAIL << std::endl;
+      exit (FAIL);
+    }
 
   /* set threads data */
-  job_context->contexts = new ThreadContext[multiThreadLevel];
+  job_context->contexts = new (std::nothrow) ThreadContext[multiThreadLevel];
+  if (job_context->contexts == nullptr)
+    {
+      std::cout << MSG_ERROR << MSG_ALLOC_FAIL << std::endl;
+      exit (FAIL);
+    }
 
   for (int i = 0; i < multiThreadLevel; ++i)
     {
@@ -321,9 +373,18 @@ void emit2 (K2 *key, V2 *value, void *context)
 void emit3 (K3 *key, V3 *value, void *context)
 {
   auto *thread_context = (ThreadContext *) context;
-  sem_wait (&thread_context->job->emit3_mutex);
+  if(pthread_mutex_lock (&thread_context->job->emit3_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_LOCK_FAIL << std::endl;
+      exit (FAIL);
+    }
   thread_context->job->outputVec->push_back ({key, value});
-  sem_post (&thread_context->job->emit3_mutex);
+
+  if(pthread_mutex_unlock (&thread_context->job->emit3_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_UNLOCK_FAIL << std::endl;
+      exit (FAIL);
+    }
 }
 
 /**
@@ -350,10 +411,13 @@ JobHandle startMapReduceJob (const MapReduceClient &client,
   // let the workers do their magic
   for (int i = 0; i < multiThreadLevel; ++i)
     {
-      pthread_create (job_context->job->workers + i,
-                      NULL,
+      if(pthread_create (job_context->job->workers + i,
+                      nullptr,
                       worker,
-                      job_context->contexts + i);
+                      job_context->contexts + i)){
+          std::cout << MSG_ERROR << MSG_PTHREAD_CREATION_FAIL << std::endl;
+          exit (FAIL);
+      }
     }
 
   return (JobHandle) job_context;
@@ -369,7 +433,11 @@ void waitForJob (JobHandle job)
   if (curr_job->called_join) return;
   for (int i = 0; i < curr_job->multiThreadLevel; ++i)
     {
-      pthread_join (curr_job->workers[i], NULL);
+      if (pthread_join (curr_job->workers[i], nullptr))
+        {
+          std::cout << MSG_ERROR << MSG_PTHREAD_JOIN_FAIL << std::endl;
+          exit (FAIL);
+        }
     }
   curr_job->called_join = true;
 }
@@ -388,10 +456,10 @@ void getJobState (JobHandle job, JobState *state)
   curr_job->job_state.percentage = PERCENT_COEF * (float) values.counter / (float) values.total;
 
   if (curr_job->job_state.stage == UNDEFINED_STAGE)
-      curr_job->job_state.percentage = 0;
+    curr_job->job_state.percentage = 0;
 
   if (curr_job->job_state.percentage > 100)
-      curr_job->job_state.percentage = 100;
+    curr_job->job_state.percentage = 100;
 
   *state = curr_job->job_state;
 }
@@ -405,8 +473,16 @@ void closeJobHandle (JobHandle job)
   waitForJob (job);
   auto *curr_job = (JobContext *) job;
 
-  sem_destroy (&curr_job->job->emit3_mutex);
-  sem_destroy (&curr_job->job->sort_mutex);
+  if(pthread_mutex_destroy (&curr_job->job->emit3_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_DESTROY_FAIL << std::endl;
+      exit (FAIL);
+    }
+  if(pthread_mutex_destroy (&curr_job->job->sort_mutex))
+    {
+      std::cout << MSG_ERROR << MSG_MUTEX_DESTROY_FAIL << std::endl;
+      exit (FAIL);
+    }
 
   delete[] curr_job->contexts;
 
