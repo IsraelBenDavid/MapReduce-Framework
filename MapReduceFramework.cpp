@@ -39,7 +39,8 @@ typedef struct Job {
     std::vector<IntermediateVec> intermediate_vecs;
     std::vector<IntermediateVec> shuffled_intermediate_vecs;
     JobState job_state{};
-    std::atomic<uint64_t> new_atomic_counter{};
+    std::atomic<uint64_t> state_atomic_counter{};
+    std::atomic<uint32_t> to_process_counter{};
     int multiThreadLevel{};
     const MapReduceClient *client{};
     const InputVec *inputVec{};
@@ -132,8 +133,9 @@ size_t count_elements (std::vector<IntermediateVec> &vec)
  */
 void reset_counter (Job *job, stage_t stage, uint64_t total)
 {
-  job->new_atomic_counter = ((uint64_t) stage STAGE_LOC) |
-                            (total TOTAL_LOC);
+  job->state_atomic_counter = ((uint64_t) stage STAGE_LOC) |
+                              (total TOTAL_LOC);
+  job->to_process_counter = 0;
 }
 
 /***** Phases Functions *****/
@@ -172,17 +174,15 @@ void sort_phase (ThreadContext *thread_context)
 void map_phase (ThreadContext *thread_context)
 {
   auto *curr_job = thread_context->job;
-
-  while ((curr_job->new_atomic_counter.load () GET_COUNT_BITS)
-         < (curr_job->new_atomic_counter GET_TOTAL_BITS))
+  while ((curr_job->state_atomic_counter.load () GET_COUNT_BITS)
+         < (curr_job->state_atomic_counter GET_TOTAL_BITS))
     {
-      auto old_value = curr_job->new_atomic_counter++ GET_COUNT_BITS;
-      if (old_value < curr_job->inputVec->size ())
-        {
-          InputPair pair = curr_job->inputVec->at (old_value);
-          // call map
-          curr_job->client->map (pair.first, pair.second, thread_context);
-        }
+      auto old_value = curr_job->to_process_counter++;
+      if (old_value >= curr_job->inputVec->size ()) break;
+      InputPair pair = curr_job->inputVec->at (old_value);
+      // call map
+      curr_job->client->map (pair.first, pair.second, thread_context);
+      curr_job->state_atomic_counter++;
     }
   // call sort
   sort_phase (thread_context);
@@ -211,7 +211,7 @@ void shuffle_phase (ThreadContext *thread_context)
             {
               pairs_vec.push_back (vec.back ());
               vec.pop_back ();
-              curr_job->new_atomic_counter++;
+              curr_job->state_atomic_counter++;
             }
         }
       thread_context->job->shuffled_intermediate_vecs.push_back (pairs_vec);
@@ -225,17 +225,16 @@ void shuffle_phase (ThreadContext *thread_context)
 void reduce_phase (ThreadContext *thread_context)
 {
   auto *curr_job = thread_context->job;
-  while ((curr_job->new_atomic_counter.load () GET_COUNT_BITS)
-         < (curr_job->new_atomic_counter.load () GET_TOTAL_BITS))
+  while ((curr_job->state_atomic_counter.load () GET_COUNT_BITS)
+         < (curr_job->state_atomic_counter.load () GET_TOTAL_BITS))
     {
-      auto old_value = curr_job->new_atomic_counter++ GET_COUNT_BITS;
-      if (old_value < thread_context->job->shuffled_intermediate_vecs.size ())
-        {
-          IntermediateVec shuffled_vec =
-              thread_context->job->shuffled_intermediate_vecs.at (old_value);
-          // call reduce
-          thread_context->job->client->reduce (&shuffled_vec, thread_context);
-        }
+      auto old_value = curr_job->to_process_counter++;
+      if (old_value >= thread_context->job->shuffled_intermediate_vecs.size ()) break;
+      IntermediateVec shuffled_vec =
+          thread_context->job->shuffled_intermediate_vecs.at (old_value);
+      // call reduce
+      thread_context->job->client->reduce (&shuffled_vec, thread_context);
+      curr_job->state_atomic_counter++;
     }
 
 }
@@ -449,7 +448,7 @@ void waitForJob (JobHandle job)
 void getJobState (JobHandle job, JobState *state)
 {
   auto *curr_job = ((JobContext *) job)->job;
-  auto values = get_atomic_values (curr_job->new_atomic_counter.load ());
+  auto values = get_atomic_values (curr_job->state_atomic_counter.load ());
 
   curr_job->job_state.stage = static_cast<stage_t>(values.stage);
   curr_job->job_state.percentage = PERCENT_COEF * (float) values.counter / (float) values.total;
